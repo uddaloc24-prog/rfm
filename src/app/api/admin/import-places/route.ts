@@ -68,16 +68,7 @@ interface PlaceResult {
 }
 
 export async function POST(req: NextRequest) {
-  // Admin-only: verify caller is the admin user
-  try {
-    const { createClient } = await import('@/lib/supabase-server');
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!user || !adminEmail || user.email !== adminEmail) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  } catch {
+  if (req.cookies.get('rfm_admin')?.value !== 'granted') {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 

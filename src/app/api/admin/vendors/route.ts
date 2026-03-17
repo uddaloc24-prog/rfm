@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 
 const VALID_STATUSES = ['pending', 'verified', 'flagged', 'removed'];
 
 export async function PATCH(request: NextRequest) {
   try {
-    // Use session client only to verify admin identity
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!user || !adminEmail || user.email !== adminEmail) {
+    if (request.cookies.get('rfm_admin')?.value !== 'granted') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 

@@ -29,10 +29,6 @@ export async function POST(request: NextRequest) {
 
     const { wasExisting } = await saveTag(supabase, user.id, vendor_id, tag as Tag);
 
-    // Refresh community_score after every tag (incl. first-time ratings that skip comparisons).
-    // Best-effort — fire and forget.
-    void supabase.rpc('update_vendor_community_score', { vendor_id });
-
     const candidates = await selectComparisonCandidates(supabase, user.id, vendor_id, tag as Tag);
 
     return NextResponse.json({ wasExisting, candidates }, { status: 201 });

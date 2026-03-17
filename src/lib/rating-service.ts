@@ -18,7 +18,6 @@ import {
   DEFAULT_ELO,
   calculateEloUpdate,
   assignRankPositions,
-  groupCandidatesByTagPreference,
   type Tag,
   type ComparisonCandidate,
 } from './elo';
@@ -106,14 +105,26 @@ export async function saveTag(
 /**
  * Selects up to 2 vendors for the comparison phase.
  *
- * Selection strategy:
- * 1. Fetch all other vendors the user has tagged (excluding the one just rated).
- * 2. Sort by tag preference (same-sentiment first).
- * 3. Shuffle within each tag group.
- * 4. Return first 2.
+ * Selection strategy (applied in order):
  *
- * Returns [] if user has 0 other tagged vendors (first-ever tag → skip comparison).
- * Returns [one] if user has exactly 1 other tagged vendor → show 1 comparison card.
+ * Rule 1 — Skip Already Compared:
+ *   Exclude vendors that have already been directly compared against newlyTaggedVendorId
+ *   for this user (from the comparisons table).
+ *
+ * Rule 2 — ELO Gap Filter (≤ 300):
+ *   Exclude vendors whose ELO score differs from the newly tagged vendor's ELO by
+ *   more than 300 points. No silent ELO updates for excluded vendors.
+ *
+ * Rule 3 — Surface Most Uncertain (sort by ELO gap ASC):
+ *   From remaining candidates, sort by absolute ELO gap ascending (smallest gap =
+ *   most uncertain = most informative comparison). Tiebreaker: updated_at ASC
+ *   (rated longest ago first). Take top 2.
+ *
+ * Returns [] if 0 candidates survive filtering (first-ever tag, or all excluded).
+ * Returns [one] if exactly 1 survives.
+ *
+ * Note: the `tag` parameter is retained for API compatibility but is no longer
+ * used for ordering. Tag-preference ordering has been replaced by Rules 1–3.
  */
 export async function selectComparisonCandidates(
   supabase: SupabaseClient,
@@ -131,27 +142,73 @@ export async function selectComparisonCandidates(
   if (tErr) throw tErr;
   if (!tags || tags.length === 0) return [];
 
-  // Fetch ELO scores for those vendors.
-  const vendorIds = tags.map((t) => t.vendor_id);
+  // --- Rule 1: Build set of vendors already directly compared with newlyTaggedVendorId ---
+  const { data: existingComps } = await supabase
+    .from('comparisons')
+    .select('winner_vendor_id, loser_vendor_id')
+    .eq('user_id', userId)
+    .or(`winner_vendor_id.eq.${newlyTaggedVendorId},loser_vendor_id.eq.${newlyTaggedVendorId}`);
+
+  const alreadyCompared = new Set<string>();
+  for (const comp of existingComps ?? []) {
+    if (comp.winner_vendor_id === newlyTaggedVendorId) alreadyCompared.add(comp.loser_vendor_id);
+    if (comp.loser_vendor_id === newlyTaggedVendorId) alreadyCompared.add(comp.winner_vendor_id);
+  }
+
+  // Exclude vendors already compared against the new vendor.
+  const uncomparedTags = tags.filter((t) => !alreadyCompared.has(t.vendor_id));
+  if (uncomparedTags.length === 0) return [];
+
+  // Fetch ELO scores + updated_at for candidate vendors.
+  const vendorIds = uncomparedTags.map((t) => t.vendor_id);
   const { data: rankings, error: rkErr } = await supabase
     .from('personal_rankings')
-    .select('vendor_id, elo_score')
+    .select('vendor_id, elo_score, updated_at')
     .eq('user_id', userId)
     .in('vendor_id', vendorIds);
 
   if (rkErr) throw rkErr;
 
-  // Join tags + ELO in memory.
   const eloMap = new Map(rankings?.map((r) => [r.vendor_id, r.elo_score as number]) ?? []);
-  const candidates: ComparisonCandidate[] = tags.map((t) => ({
-    vendor_id: t.vendor_id,
-    tag: t.tag as Tag,
-    elo_score: eloMap.get(t.vendor_id) ?? DEFAULT_ELO,
-  }));
+  const updatedAtMap = new Map(rankings?.map((r) => [r.vendor_id, r.updated_at as string]) ?? []);
 
-  // Apply tag-preference ordering, return up to 2.
-  const ordered = groupCandidatesByTagPreference(candidates, tag);
-  return ordered.slice(0, 2);
+  // --- Rule 2: ELO gap filter — fetch newly tagged vendor's ELO ---
+  const { data: newVendorRank } = await supabase
+    .from('personal_rankings')
+    .select('elo_score')
+    .eq('user_id', userId)
+    .eq('vendor_id', newlyTaggedVendorId)
+    .maybeSingle();
+
+  const newVendorElo = newVendorRank?.elo_score ?? DEFAULT_ELO;
+
+  // Build candidate pool with updated_at for tiebreaker, applying Rule 2 filter.
+  const candidates: (ComparisonCandidate & { updated_at: string })[] = uncomparedTags
+    .map((t) => ({
+      vendor_id: t.vendor_id,
+      tag: t.tag as Tag,
+      elo_score: eloMap.get(t.vendor_id) ?? DEFAULT_ELO,
+      updated_at: updatedAtMap.get(t.vendor_id) ?? new Date(0).toISOString(),
+    }))
+    .filter((c) => Math.abs(c.elo_score - newVendorElo) <= 300);
+
+  if (candidates.length === 0) return [];
+
+  // --- Rule 3: Sort by ELO gap ASC (most uncertain first), tiebreak updated_at ASC ---
+  candidates.sort((a, b) => {
+    const gapA = Math.abs(a.elo_score - newVendorElo);
+    const gapB = Math.abs(b.elo_score - newVendorElo);
+    if (gapA !== gapB) return gapA - gapB;
+    // Tiebreaker: rated longest ago first (lower updated_at value first).
+    return new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime();
+  });
+
+  // Return top 2 (strip the extra updated_at field from the public shape).
+  return candidates.slice(0, 2).map(({ vendor_id, tag: t, elo_score }) => ({
+    vendor_id,
+    tag: t,
+    elo_score,
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -159,11 +216,15 @@ export async function selectComparisonCandidates(
 // ---------------------------------------------------------------------------
 
 /**
- * Saves a comparison result and runs ELO update + community score refresh.
+ * Saves a comparison result and runs ELO update + rank recalculation.
  *
  * Call once per comparison card the user completes (BETTER or WORSE).
  * If the user closes the app before this is called, the tag is already saved —
  * the comparison is skipped and no record is written (edge case #5 from spec).
+ *
+ * Note: community_score is NOT refreshed here. It is maintained by the
+ * hourly cron job (global ranking system). Personal comparison results must
+ * not trigger immediate community score recalculation.
  */
 export async function processComparison(
   supabase: SupabaseClient,
@@ -181,20 +242,19 @@ export async function processComparison(
 
   // Update ELO scores and recalculate all rank positions.
   await runEloUpdateAndRecalculate(supabase, userId, winnerVendorId, loserVendorId);
-
-  // Refresh community_score on both vendors (best-effort).
-  try {
-    await Promise.all([
-      supabase.rpc('update_vendor_community_score', { vendor_id: winnerVendorId }),
-      supabase.rpc('update_vendor_community_score', { vendor_id: loserVendorId }),
-    ]);
-  } catch { /* non-fatal */ }
 }
 
 // ---------------------------------------------------------------------------
 // runEloUpdateAndRecalculate
 // ---------------------------------------------------------------------------
 
+/**
+ * This function is called ONLY from user-answered comparisons.
+ * Never call this from inference, cron jobs, or global score logic.
+ *
+ * Guard: ELO update requires a real comparison row where the user
+ * actively chose winner/loser. No inferred flag exists or is accepted.
+ */
 /**
  * Fetches ELO scores for both vendors, applies the ELO formula, saves them,
  * then recalculates rank_position for ALL of this user's vendors.

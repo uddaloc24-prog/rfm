@@ -5,7 +5,7 @@ import { createServerClient } from '@supabase/ssr';
 export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  // Always allow: auth flow, banned page, API routes, static assets
+  // Always allow: auth flow, banned page, API routes, static assets, admin
   if (
     pathname.startsWith('/auth') ||
     pathname.startsWith('/banned') ||
@@ -13,10 +13,16 @@ export async function middleware(req: NextRequest) {
     pathname.startsWith('/_next') ||
     pathname.startsWith('/icons') ||
     pathname.startsWith('/manifest') ||
+    pathname.startsWith('/admin') ||
     pathname === '/favicon.ico'
   ) {
     return NextResponse.next();
   }
+
+  // Create a mutable response so refreshed session cookies can be written back.
+  // Without this, Supabase access tokens expire after 1 hour and the user is
+  // incorrectly treated as logged out even though their refresh token is valid.
+  let response = NextResponse.next({ request: req });
 
   try {
     const supabase = createServerClient(
@@ -25,7 +31,13 @@ export async function middleware(req: NextRequest) {
       {
         cookies: {
           getAll: () => req.cookies.getAll(),
-          setAll: () => {},
+          setAll: (cookiesToSet) => {
+            cookiesToSet.forEach(({ name, value }) => req.cookies.set(name, value));
+            response = NextResponse.next({ request: req });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options)
+            );
+          },
         },
       }
     );
@@ -50,7 +62,7 @@ export async function middleware(req: NextRequest) {
     // Supabase not configured or network error — allow through so the app still loads
   }
 
-  return NextResponse.next();
+  return response;
 }
 
 export const config = {

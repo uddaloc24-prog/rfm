@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Suspense } from 'react';
 
 const PREVIEW_PLACES = [
@@ -34,6 +34,7 @@ function AuthContent() {
   const [error, setError] = useState('');
   const searchParams = useSearchParams();
   const authError = searchParams.get('error');
+  const router = useRouter();
 
   async function handleGoogleSignIn() {
     setError('');
@@ -124,6 +125,13 @@ function AuthContent() {
               style={{ background: '#E8611A', color: '#FFFFFF' }}
             >
               Get started →
+            </button>
+            <button
+              onClick={() => router.push('/admin-login')}
+              className="w-full py-2 font-body text-xs active:opacity-60"
+              style={{ color: '#C4B9B0', background: 'transparent', border: 'none' }}
+            >
+              Admin mode
             </button>
           </div>
         </div>

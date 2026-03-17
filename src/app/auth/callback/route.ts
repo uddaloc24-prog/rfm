@@ -32,7 +32,28 @@ export async function GET(request: NextRequest) {
           .select('onboarded')
           .eq('id', sessionData.user.id)
           .single();
-        destination = userProfile?.onboarded ? '/' : '/onboarding';
+
+        if (userProfile?.onboarded) {
+          destination = '/';
+        } else {
+          // Safety net: if the onboarded flag is false but the user has ratings,
+          // they clearly completed onboarding — the flag just wasn't saved.
+          // Fix it now and send them home instead of making them re-onboard.
+          const { count } = await supabase
+            .from('user_tags')
+            .select('*', { count: 'exact', head: true })
+            .eq('user_id', sessionData.user.id);
+
+          if ((count ?? 0) > 0) {
+            await supabase
+              .from('users')
+              .update({ onboarded: true })
+              .eq('id', sessionData.user.id);
+            destination = '/';
+          } else {
+            destination = '/onboarding';
+          }
+        }
       }
       return NextResponse.redirect(`${origin}${destination}`);
     }

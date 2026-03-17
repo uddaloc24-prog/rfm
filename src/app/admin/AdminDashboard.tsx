@@ -22,6 +22,7 @@ interface Props {
   users: User[];
   vendors: Vendor[];
   recentRatings: RecentRating[];
+  emailMap: Record<string, string>;
 }
 
 type Tab = 'vendors' | 'users' | 'activity';
@@ -43,7 +44,7 @@ function timeAgo(dateStr: string): string {
   return `${Math.floor(h / 24)}d ago`;
 }
 
-export default function AdminDashboard({ stats, users, vendors, recentRatings }: Props) {
+export default function AdminDashboard({ stats, users, vendors, recentRatings, emailMap }: Props) {
   const [tab, setTab] = useState<Tab>('vendors');
   const [vendorList, setVendorList] = useState<Vendor[]>(vendors);
   const [userList, setUserList] = useState<User[]>(users);
@@ -55,6 +56,7 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
   const [banningUser, setBanningUser] = useState<string | null>(null);
   const [banReason, setBanReason] = useState('');
   const [banError, setBanError] = useState('');
+  const [deletingUser, setDeletingUser] = useState<string | null>(null);
   const [editingVendor, setEditingVendor] = useState<string | null>(null);
   const [vendorEdits, setVendorEdits] = useState<Record<string, string>>({});
 
@@ -80,6 +82,26 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
       } else {
         const d = await res.json();
         setBanError(d.error ?? 'Failed');
+      }
+    } finally {
+      setUpdating(null);
+    }
+  }
+
+  async function handleDeleteUser(userId: string) {
+    setUpdating(userId);
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      if (res.ok) {
+        setUserList((prev) => prev.filter((u) => u.id !== userId));
+        setDeletingUser(null);
+      } else {
+        const d = await res.json();
+        setBanError(d.error ?? 'Delete failed');
       }
     } finally {
       setUpdating(null);
@@ -189,7 +211,7 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
           </h1>
           <p style={{ color: '#9B8E84', fontSize: '12px', margin: '2px 0 0' }}>Real Food Map of India</p>
         </div>
-        <div style={{ display: 'flex', gap: '24px' }}>
+        <div style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
           {[
             { label: 'Users', value: stats.userCount },
             { label: 'Vendors', value: stats.vendorCount },
@@ -201,6 +223,24 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
               <div style={{ color: '#9B8E84', fontSize: '11px', marginTop: '2px' }}>{label}</div>
             </div>
           ))}
+          <button
+            onClick={async () => {
+              await fetch('/api/admin/auth', { method: 'DELETE' });
+              window.location.href = '/auth';
+            }}
+            style={{
+              padding: '6px 14px',
+              borderRadius: '8px',
+              border: '1px solid #3A3030',
+              background: 'transparent',
+              color: '#9B8E84',
+              fontSize: '12px',
+              fontWeight: 600,
+              cursor: 'pointer',
+            }}
+          >
+            Log out
+          </button>
         </div>
       </header>
 
@@ -516,9 +556,9 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
               <tbody>
                 {filteredUsers.map((u) => (
                   <>
-                    <tr key={u.id} style={{ borderBottom: banningUser === u.id ? 'none' : '1px solid #F0EBE5', opacity: u.is_banned ? 0.7 : 1 }}>
+                    <tr key={u.id} style={{ borderBottom: banningUser === u.id || deletingUser === u.id ? 'none' : '1px solid #F0EBE5', opacity: u.is_banned ? 0.7 : 1 }}>
+                      <td style={{ padding: '10px 12px', color: '#9B8E84', fontSize: '12px' }}>{emailMap[u.id] ?? '—'}</td>
                       <td style={{ padding: '10px 12px', color: '#1A1205', fontWeight: 500 }}>{u.display_name}</td>
-                      <td style={{ padding: '10px 12px', color: '#9B8E84' }}>@{u.username}</td>
                       <td style={{ padding: '10px 12px', color: '#9B8E84' }}>{u.city}</td>
                       <td style={{ padding: '10px 12px', color: '#9B8E84' }}>{u.rating_count}</td>
                       <td style={{ padding: '10px 12px' }}>
@@ -537,21 +577,29 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
                       </td>
                       <td style={{ padding: '10px 12px', color: '#9B8E84' }}>{timeAgo(u.created_at)}</td>
                       <td style={{ padding: '10px 12px' }}>
-                        {u.is_banned ? (
+                        <div style={{ display: 'flex', gap: '6px' }}>
+                          {u.is_banned ? (
+                            <ActionButton
+                              label="↩ Unban"
+                              color="#25D366"
+                              disabled={updating === u.id}
+                              onClick={() => handleBanAction(u.id, 'unban')}
+                            />
+                          ) : (
+                            <ActionButton
+                              label="⊘ Ban"
+                              color="#EF4444"
+                              disabled={updating === u.id}
+                              onClick={() => { setBanningUser(u.id); setDeletingUser(null); setBanReason(''); setBanError(''); }}
+                            />
+                          )}
                           <ActionButton
-                            label="↩ Unban"
-                            color="#25D366"
+                            label="✕ Delete"
+                            color="#7F1D1D"
                             disabled={updating === u.id}
-                            onClick={() => handleBanAction(u.id, 'unban')}
+                            onClick={() => { setDeletingUser(u.id); setBanningUser(null); setBanError(''); }}
                           />
-                        ) : (
-                          <ActionButton
-                            label="⊘ Ban"
-                            color="#EF4444"
-                            disabled={updating === u.id}
-                            onClick={() => { setBanningUser(u.id); setBanReason(''); setBanError(''); }}
-                          />
-                        )}
+                        </div>
                       </td>
                     </tr>
                     {banningUser === u.id && (
@@ -577,6 +625,29 @@ export default function AdminDashboard({ stats, users, vendors, recentRatings }:
                               color="#9B8E84"
                               disabled={false}
                               onClick={() => setBanningUser(null)}
+                            />
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {deletingUser === u.id && (
+                      <tr key={`${u.id}-delete`} style={{ borderBottom: '1px solid #F0EBE5', background: '#FFF0F0' }}>
+                        <td colSpan={7} style={{ padding: '10px 12px' }}>
+                          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                            <span style={{ flex: 1, fontSize: '12px', color: '#7F1D1D', fontWeight: 600 }}>
+                              Permanently delete {u.display_name}? This removes all their data and cannot be undone.
+                            </span>
+                            <ActionButton
+                              label="Confirm Delete"
+                              color="#7F1D1D"
+                              disabled={updating === u.id}
+                              onClick={() => handleDeleteUser(u.id)}
+                            />
+                            <ActionButton
+                              label="Cancel"
+                              color="#9B8E84"
+                              disabled={false}
+                              onClick={() => setDeletingUser(null)}
                             />
                           </div>
                         </td>

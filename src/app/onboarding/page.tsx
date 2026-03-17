@@ -217,13 +217,19 @@ export default function OnboardingPage() {
 
   async function finish() {
     setStep('finishing');
-    try {
-      await fetch('/api/users/me', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ onboarded: true }),
-      });
-    } catch { /* non-fatal */ }
+    // Retry up to 3 times — if onboarded flag isn't saved, user will be bounced
+    // back to onboarding on their next login, losing all their progress.
+    let saved = false;
+    for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+      try {
+        const res = await fetch('/api/users/me', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ onboarded: true }),
+        });
+        if (res.ok) saved = true;
+      } catch { /* network error, retry */ }
+    }
     await refreshProfile();
     router.replace(selectedPlaces.length > 0 ? '/map' : '/');
   }

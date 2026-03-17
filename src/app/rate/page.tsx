@@ -45,6 +45,13 @@ export default function RatePage() {
   const [vendorsLoading, setVendorsLoading] = useState(true);
   const [searchFocused, setSearchFocused] = useState(false);
 
+  // Neighbor-verification refs — mutable, no re-render needed.
+  // Reset at the start of every new rating session (inside pickVendor).
+  const verifyCountRef = useRef(0);                               // how many verification comparisons queued so far (max 4)
+  const verifyDirRef = useRef<'above' | 'below' | null>(null);   // direction of last verification comparison
+  const aboveStableRef = useRef(false);                          // true once we've LOST to the vendor above
+  const belowStableRef = useRef(false);                          // true once we've BEATEN the vendor below
+
   // Pre-load full vendor list once on mount — all filtering is client-side (instant).
   useEffect(() => {
     fetch('/api/vendors/trending?limit=500')
@@ -72,6 +79,11 @@ export default function RatePage() {
     if (!user) return;
     setStage('loading');
     setError(null);
+    // Reset verification state for this new rating session.
+    verifyCountRef.current = 0;
+    verifyDirRef.current = null;
+    aboveStableRef.current = false;
+    belowStableRef.current = false;
     const realVendor = await ensureVendorInDb(vendor);
     // If vendor creation failed, the id still starts with 'osm:' (not a real UUID).
     // Proceeding would cause the ratings API to fail with a FK/UUID error.
@@ -158,12 +170,126 @@ export default function RatePage() {
 
     const nextIndex = candidateIndex + 1;
     if (nextIndex < candidates.length) {
+      // More candidates already queued (either initial or previously-appended verification).
       setCandidateIndex(nextIndex);
       setSubmitting(false);
     } else {
-      // All comparisons done — fetch updated rank and go to success.
-      await goToSuccessAfterComparisons(selectedVendor, selectedTag);
+      // No more queued candidates — try to add a neighbor-verification comparison.
+      const next = await getNextVerificationNeighbor(selectedVendor.id, selectedVendorWon);
+      if (next) {
+        setCandidates((prev) => [...prev, next.candidate]);
+        setCandidateVendors((prev) => ({ ...prev, [next.candidate.vendor_id]: next.vendor }));
+        setCandidateIndex(nextIndex); // nextIndex == new item's index
+        setSubmitting(false);
+      } else {
+        // Verification complete (or skipped) — go to success.
+        await goToSuccessAfterComparisons(selectedVendor, selectedTag);
+      }
     }
+  }
+
+  /**
+   * Determines the next neighbor to verify against and returns it as a
+   * ComparisonCandidate + Vendor pair, or null when verification is done.
+   *
+   * Logic:
+   *  - Fetch the current ranked list and find where `newVendorId` sits.
+   *  - First call (verifyDirRef === null): check above (rank R-1) if it exists,
+   *    else check below (rank R+1). Handles #1 / last-place edge cases naturally.
+   *  - Subsequent calls: adapt direction based on last result.
+   *      - Beat above  → moved up? Check new above.  Lost to above → aboveStable = true.
+   *      - Lost to below → moved down? Check new below. Beat below → belowStable = true.
+   *  - Stop when both directions are stable, no neighbors remain, or verifyCount ≥ 4.
+   */
+  async function getNextVerificationNeighbor(
+    newVendorId: string,
+    lastWon: boolean,
+  ): Promise<{ candidate: ComparisonCandidate; vendor: Vendor } | null> {
+    if (verifyCountRef.current >= 4) return null;
+
+    // Update stability based on the comparison that just finished.
+    if (verifyDirRef.current === 'above' && !lastWon) aboveStableRef.current = true;
+    if (verifyDirRef.current === 'below' && lastWon)  belowStableRef.current = true;
+
+    if (aboveStableRef.current && belowStableRef.current) return null;
+
+    // Fetch the freshly-recalculated ranked list.
+    let rankedList: Array<{ vendor_id: string; elo_score: number; tag: string }> = [];
+    try {
+      const res = await fetch('/api/ratings/my-map');
+      const data = await res.json();
+      rankedList = (data.ratings ?? []).map(
+        (r: { vendor: { id: string }; tag: string; elo_score: number }) => ({
+          vendor_id: r.vendor.id,
+          tag: r.tag,
+          elo_score: r.elo_score,
+        }),
+      );
+    } catch {
+      return null;
+    }
+
+    const N = rankedList.length;
+    if (N <= 1) return null; // only one place rated, no neighbors
+
+    const idx = rankedList.findIndex((r) => r.vendor_id === newVendorId);
+    if (idx < 0) return null;
+
+    // Determine which direction to check next.
+    let nextDir: 'above' | 'below' | null = null;
+
+    if (verifyDirRef.current === null) {
+      // First verification: prefer checking above; fall back to below.
+      if (idx > 0 && !aboveStableRef.current)       nextDir = 'above';
+      else if (idx < N - 1 && !belowStableRef.current) nextDir = 'below';
+    } else if (verifyDirRef.current === 'above') {
+      if (lastWon) {
+        // Beat the above neighbor → might have moved up → recheck new above.
+        if (idx > 0 && !aboveStableRef.current)          nextDir = 'above';
+        else if (idx < N - 1 && !belowStableRef.current) nextDir = 'below';
+      } else {
+        // Lost to above → above is now stable. Move on to below.
+        if (idx < N - 1 && !belowStableRef.current) nextDir = 'below';
+      }
+    } else if (verifyDirRef.current === 'below') {
+      if (!lastWon) {
+        // Lost to below neighbor → might have moved down → recheck new below.
+        if (idx < N - 1 && !belowStableRef.current)    nextDir = 'below';
+        else if (idx > 0 && !aboveStableRef.current)   nextDir = 'above';
+      } else {
+        // Beat below → below is now stable. Check above if needed.
+        if (idx > 0 && !aboveStableRef.current) nextDir = 'above';
+      }
+    }
+
+    if (nextDir === null) return null;
+
+    const neighborIdx = nextDir === 'above' ? idx - 1 : idx + 1;
+    if (neighborIdx < 0 || neighborIdx >= N) return null;
+
+    const neighbor = rankedList[neighborIdx];
+
+    // Fetch the vendor's display details (name, category, neighbourhood).
+    let vendorDetails: Vendor | null = null;
+    try {
+      const res = await fetch(`/api/vendors?ids=${neighbor.vendor_id}`);
+      const data = await res.json();
+      vendorDetails = (data.vendors ?? [])[0] ?? null;
+    } catch { /* non-fatal */ }
+
+    if (!vendorDetails) return null;
+
+    verifyDirRef.current = nextDir;
+    verifyCountRef.current += 1;
+
+    return {
+      candidate: {
+        vendor_id: neighbor.vendor_id,
+        elo_score: neighbor.elo_score,
+        tag: neighbor.tag as Tag,
+      },
+      vendor: vendorDetails,
+    };
   }
 
   async function goToSuccessAfterComparisons(vendor: Vendor, tag: Tag) {

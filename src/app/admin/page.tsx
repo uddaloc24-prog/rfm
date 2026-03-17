@@ -1,14 +1,14 @@
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase-server';
+import { cookies } from 'next/headers';
+import { createAdminClient } from '@/lib/supabase-admin';
 import AdminDashboard from './AdminDashboard';
 import { User, Vendor } from '@/lib/types';
 
 export default async function AdminPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const cookieStore = await cookies();
+  if (cookieStore.get('rfm_admin')?.value !== 'granted') redirect('/admin-login');
 
-  const adminEmail = process.env.ADMIN_EMAIL;
-  if (!user || !adminEmail || user.email !== adminEmail) redirect('/');
+  const supabase = createAdminClient();
 
   const [
     { count: userCount },
@@ -18,6 +18,7 @@ export default async function AdminPage() {
     { data: users },
     { data: vendors },
     { data: recentRatings },
+    { data: authData },
   ] = await Promise.all([
     supabase.from('users').select('id', { count: 'exact', head: true }),
     supabase.from('vendors').select('id', { count: 'exact', head: true }),
@@ -30,7 +31,14 @@ export default async function AdminPage() {
       .select('personal_score, created_at, user_id, vendor_id')
       .order('created_at', { ascending: false })
       .limit(50),
+    supabase.auth.admin.listUsers({ perPage: 1000 }),
   ]);
+
+  // Build id → email map from auth.users
+  const emailMap: Record<string, string> = {};
+  for (const au of (authData?.users ?? [])) {
+    if (au.email) emailMap[au.id] = au.email;
+  }
 
   return (
     <AdminDashboard
@@ -43,6 +51,7 @@ export default async function AdminPage() {
       users={(users ?? []) as User[]}
       vendors={(vendors ?? []) as Vendor[]}
       recentRatings={recentRatings ?? []}
+      emailMap={emailMap}
     />
   );
 }

@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase-server';
 import { createAdminClient } from '@/lib/supabase-admin';
 
 export async function PATCH(request: NextRequest) {
   try {
-    const supabase = await createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const adminEmail = process.env.ADMIN_EMAIL;
-    if (!user || !adminEmail || user.email !== adminEmail) {
+    if (request.cookies.get('rfm_admin')?.value !== 'granted') {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -37,6 +32,33 @@ export async function PATCH(request: NextRequest) {
         .eq('id', user_id);
       if (error) throw error;
     }
+
+    return NextResponse.json({ success: true });
+  } catch (e: unknown) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    if (request.cookies.get('rfm_admin')?.value !== 'granted') {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const { user_id } = await request.json();
+    if (!user_id) {
+      return NextResponse.json({ error: 'user_id required' }, { status: 400 });
+    }
+
+    const adminDb = createAdminClient();
+
+    // Delete public.users row first — cascades all ratings, rankings, tags, etc.
+    const { error: dbError } = await adminDb.from('users').delete().eq('id', user_id);
+    if (dbError) throw dbError;
+
+    // Delete from auth.users (hard delete)
+    const { error: authError } = await adminDb.auth.admin.deleteUser(user_id);
+    if (authError) throw authError;
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
