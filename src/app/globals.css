@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand colors — light theme */
+  --color-bg: #FAFAF8;
+  --color-surface: #FFFFFF;
+  --color-panel: #F5F2EE;
+  --color-saffron: #E8611A;
+  --color-gold: #F4A425;
+  --color-text: #1A1205;
+  --color-muted: #9B8E84;
+  --color-border: #E8E2DC;
+  --color-green: #25D366;
+
+  /* Typography */
+  --font-display: var(--font-playfair), Georgia, "Times New Roman", serif;
+  --font-body: var(--font-dm-sans), system-ui, -apple-system, sans-serif;
+
+  --ease-spring: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Base */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  background-color: #FAFAF8;
+  color: #1A1205;
+  font-family: var(--font-dm-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior: none;
+}
+
+/* Scrollbar hide utility */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Screen container */
+.screen {
+  max-width: 430px;
+  margin-left: auto;
+  margin-right: auto;
+  min-height: 100dvh;
+  position: relative;
+  background-color: #FAFAF8;
+  overflow-x: hidden;
+}
+
+/* Page slide transition */
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to   { transform: translateX(0); }
+}
+.page-enter {
+  animation: slide-in-right 0.32s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+/* Card press state */
+.card-press {
+  transition: transform 0.1s ease;
+}
+.card-press:active {
+  transform: scale(0.97);
+}
+
+/* FAB spring entrance */
+@keyframes fab-enter {
+  0% { transform: translateY(80px) scale(0.85); opacity: 0; }
+  70% { transform: translateY(-6px) scale(1.03); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+.fab-enter {
+  animation: fab-enter 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Compare card selected */
+.compare-selected {
+  border-color: #E8611A !important;
+  background: rgba(232, 97, 26, 0.06);
+}
+
+/* Bottom safe area */
+.safe-bottom {
+  padding-bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+}
+
+/* Input focus */
+input:focus,
+textarea:focus {
+  outline: none;
+  border-color: #E8611A;
+  box-shadow: 0 0 0 3px rgba(232, 97, 26, 0.12);
+}
+
+/* ─── Live Map: user location pulsing dot ─────────────────────────────────── */
+.user-location-dot {
+  width: 16px;
+  height: 16px;
+  background: #3B82F6;
+  border-radius: 50%;
+  border: 2.5px solid #ffffff;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.5);
+  position: relative;
+}
+
+.user-location-dot::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: rgba(59, 130, 246, 0.25);
+  animation: location-ring 2s ease-out infinite;
+}
+
+@keyframes location-ring {
+  0%   { opacity: 1; transform: translate(-50%, -50%) scale(0.4); }
+  80%  { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.6); }
+}
+
+/* ─── Mapbox popup overrides ──────────────────────────────────────────────── */
+.mapboxgl-popup-content {
+  border-radius: 16px !important;
+  padding: 14px !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28) !important;
+  font-family: var(--font-dm-sans), system-ui, sans-serif !important;
+}
+
+.mapboxgl-popup-tip {
+  display: none !important;
+}
+
+/* Hide default Mapbox attribution button (keep legal but compact) */
+.mapboxgl-ctrl-attrib-button {
+  display: none !important;
+}
