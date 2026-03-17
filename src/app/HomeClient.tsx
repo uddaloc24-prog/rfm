@@ -57,6 +57,7 @@ export default function HomeClient({ initialVendors }: HomeClientProps) {
   const [communityRatings, setCommunityRatings] = useState<CommunityRating[]>([]);
   const [communityFilter, setCommunityFilter] = useState<VendorCategory | 'all'>('all');
   const [communityLoading, setCommunityLoading] = useState(true);
+  const [userRankMap, setUserRankMap] = useState<Map<string, number>>(new Map());
   const { profile } = useAuth();
 
   // Show onboarding overlay only for non-onboarded or first-time visitors
@@ -67,14 +68,34 @@ export default function HomeClient({ initialVendors }: HomeClientProps) {
     }
   }, [profile]);
 
-  // Fetch community ratings on mount
+  // Fetch community ratings on mount — abort after 8s to avoid infinite spinner
   useEffect(() => {
-    fetch('/api/ratings/public')
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+
+    fetch('/api/ratings/public', { signal: controller.signal })
       .then((r) => r.json())
       .then((d) => setCommunityRatings(d.ratings ?? []))
       .catch(() => setCommunityRatings([]))
-      .finally(() => setCommunityLoading(false));
+      .finally(() => { clearTimeout(timer); setCommunityLoading(false); });
+
+    return () => { clearTimeout(timer); controller.abort(); };
   }, []);
+
+  // Fetch the user's personal rankings to show rank badges on vendor cards
+  useEffect(() => {
+    if (!profile) return;
+    fetch('/api/ratings/my-map')
+      .then((r) => r.json())
+      .then((d) => {
+        const map = new Map<string, number>();
+        for (const row of d.ratings ?? []) {
+          if (row.vendor?.id && row.rank != null) map.set(row.vendor.id, row.rank);
+        }
+        setUserRankMap(map);
+      })
+      .catch(() => {});
+  }, [profile]);
 
   // Real-time subscription
   useEffect(() => {
@@ -206,7 +227,12 @@ export default function HomeClient({ initialVendors }: HomeClientProps) {
         ) : (
           <div className="flex flex-col gap-2">
             {displayed.map((vendor, idx) => (
-              <VendorCard key={vendor.id} vendor={vendor} rank={idx + 1} />
+              <VendorCard
+                key={vendor.id}
+                vendor={vendor}
+                rank={idx + 1}
+                userRank={userRankMap.get(vendor.id)}
+              />
             ))}
           </div>
         )}

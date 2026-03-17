@@ -3,6 +3,40 @@ import { createClient } from '@/lib/supabase-server';
 import { saveTag, selectComparisonCandidates } from '@/lib/rating-service';
 import type { Tag } from '@/lib/types';
 
+export async function PATCH(request: Request) {
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const { vendor_id, tag } = await request.json();
+    if (!vendor_id) return NextResponse.json({ error: 'vendor_id required' }, { status: 400 });
+    if (!['good', 'bad', 'very_bad'].includes(tag)) {
+      return NextResponse.json({ error: 'tag must be good | bad | very_bad' }, { status: 400 });
+    }
+
+    const { data, error } = await supabase
+      .from('user_tags')
+      .update({ tag: tag as Tag })
+      .eq('user_id', user.id)
+      .eq('vendor_id', vendor_id)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') {
+        return NextResponse.json({ error: 'Rating not found — rate this place first' }, { status: 404 });
+      }
+      throw error;
+    }
+
+    return NextResponse.json({ tag: data.tag });
+  } catch (e: unknown) {
+    console.error('[PATCH /api/ratings]', e);
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -33,6 +67,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ wasExisting, candidates }, { status: 201 });
   } catch (e: unknown) {
+    console.error('[POST /api/ratings]', e);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }

@@ -19,7 +19,8 @@ export async function GET(request: NextRequest) {
       .in('id', idList);
     if (error) throw error;
     return NextResponse.json({ vendors: data ?? [] });
-  } catch {
+  } catch (e: unknown) {
+    console.error('[GET /api/vendors]', e);
     return NextResponse.json({ vendors: [] });
   }
 }
@@ -59,8 +60,31 @@ export async function POST(request: NextRequest) {
     const { name, category, known_for, open_since, hours, price_range,
             lat, lng, address_text, neighbourhood, city = 'Bangalore' } = body;
 
-    if (!name) {
+    const VALID_CATEGORIES = ['street_food', 'mess_tiffin', 'chai_snacks', 'restaurant', 'home_cook', 'other'];
+
+    if (!name || typeof name !== 'string' || name.trim().length === 0) {
       return NextResponse.json({ error: 'name is required' }, { status: 400 });
+    }
+    if (name.trim().length > 100) {
+      return NextResponse.json({ error: 'name must be 100 characters or less' }, { status: 400 });
+    }
+    if (category && !VALID_CATEGORIES.includes(category)) {
+      return NextResponse.json({ error: `category must be one of: ${VALID_CATEGORIES.join(', ')}` }, { status: 400 });
+    }
+    if (neighbourhood && typeof neighbourhood === 'string' && neighbourhood.length > 100) {
+      return NextResponse.json({ error: 'neighbourhood must be 100 characters or less' }, { status: 400 });
+    }
+    if (lat !== undefined && lat !== null && (typeof lat !== 'number' || lat < -90 || lat > 90)) {
+      return NextResponse.json({ error: 'lat must be a number between -90 and 90' }, { status: 400 });
+    }
+    if (lng !== undefined && lng !== null && (typeof lng !== 'number' || lng < -180 || lng > 180)) {
+      return NextResponse.json({ error: 'lng must be a number between -180 and 180' }, { status: 400 });
+    }
+    if (open_since !== undefined && open_since !== null) {
+      const year = Number(open_since);
+      if (!Number.isInteger(year) || year < 1900 || year > new Date().getFullYear()) {
+        return NextResponse.json({ error: 'open_since must be a valid year between 1900 and now' }, { status: 400 });
+      }
     }
 
     // Check for duplicates: proximity-based when lat/lng provided, else name-based
@@ -125,6 +149,7 @@ export async function POST(request: NextRequest) {
     if (error) throw error;
     return NextResponse.json({ vendor: data }, { status: 201 });
   } catch (e: unknown) {
+    console.error('[POST /api/vendors]', e);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }

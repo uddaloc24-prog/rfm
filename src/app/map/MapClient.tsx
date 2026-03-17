@@ -6,7 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase';
-import { TAG_LABELS, type RatedVendorRow, type Tag } from '@/lib/types';
+import { TAG_LABELS, TAG_EMOJI, type RatedVendorRow, type Tag } from '@/lib/types';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -53,16 +53,31 @@ const VendorPin = memo(function VendorPin({
   );
 });
 
+const TAGS: Tag[] = ['good', 'bad', 'very_bad'];
+
 function PopupCard({
   rating,
   onViewDetails,
+  onChangeTag,
 }: {
   rating: RatedVendorRow;
   onViewDetails: () => void;
+  onChangeTag: (tag: Tag) => Promise<void>;
 }) {
+  const [editingTag, setEditingTag] = useState(false);
+  const [saving, setSaving] = useState(false);
   const color = TAG_COLORS[rating.tag] ?? '#22c55e';
+
+  async function handleTagSelect(tag: Tag) {
+    if (tag === rating.tag) { setEditingTag(false); return; }
+    setSaving(true);
+    await onChangeTag(tag);
+    setSaving(false);
+    setEditingTag(false);
+  }
+
   return (
-    <div style={{ width: 196 }}>
+    <div style={{ width: 200 }}>
       <p style={{ fontWeight: 700, fontSize: 13, color: '#1A1205', marginBottom: 3, lineHeight: 1.35 }}>
         {rating.vendor.name}
       </p>
@@ -71,23 +86,66 @@ function PopupCard({
           📍 {rating.vendor.neighbourhood}
         </p>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-        <span
-          style={{
-            fontSize: 11,
-            fontWeight: 600,
-            padding: '2px 9px',
-            borderRadius: 20,
-            background: color + '22',
-            color,
-          }}
-        >
-          {TAG_LABELS[rating.tag]}
-        </span>
-        <span style={{ fontSize: 11, color: '#9B8E84', whiteSpace: 'nowrap' }}>
-          #{rating.rank} on your list
-        </span>
-      </div>
+
+      {editingTag ? (
+        <div style={{ marginBottom: 10 }}>
+          <p style={{ fontSize: 10, color: '#9B8E84', marginBottom: 6 }}>Change your rating:</p>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {TAGS.map((t) => (
+              <button
+                key={t}
+                onClick={() => handleTagSelect(t)}
+                disabled={saving}
+                style={{
+                  flex: 1,
+                  padding: '6px 4px',
+                  borderRadius: 8,
+                  border: `1.5px solid ${t === rating.tag ? TAG_COLORS[t] : '#E8E2DC'}`,
+                  background: t === rating.tag ? TAG_COLORS[t] + '22' : '#FAFAF8',
+                  fontSize: 18,
+                  cursor: 'pointer',
+                  opacity: saving ? 0.6 : 1,
+                }}
+                title={TAG_LABELS[t]}
+              >
+                {TAG_EMOJI[t]}
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={() => setEditingTag(false)}
+            style={{ marginTop: 6, fontSize: 10, color: '#9B8E84', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            Cancel
+          </button>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+          <span
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '2px 9px',
+              borderRadius: 20,
+              background: color + '22',
+              color,
+            }}
+          >
+            {TAG_LABELS[rating.tag]}
+          </span>
+          <span style={{ fontSize: 11, color: '#9B8E84', whiteSpace: 'nowrap' }}>
+            #{rating.rank} on your list
+          </span>
+          <button
+            onClick={() => setEditingTag(true)}
+            style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, padding: '2px 4px', color: '#9B8E84' }}
+            title="Change tag"
+          >
+            ✏️
+          </button>
+        </div>
+      )}
+
       <button
         onClick={onViewDetails}
         style={{
@@ -285,6 +343,18 @@ export default function MapClient({ userId }: { userId: string }) {
     };
   }, [userId]);
 
+  // ── Change tag ─────────────────────────────────────────────────────────────
+  const handleChangeTag = useCallback(async (vendorId: string, tag: Tag) => {
+    const res = await fetch('/api/ratings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vendor_id: vendorId, tag }),
+    });
+    if (res.ok) {
+      setRatings((prev) => prev.map((r) => r.vendor.id === vendorId ? { ...r, tag } : r));
+    }
+  }, []);
+
   // ── Find Me ────────────────────────────────────────────────────────────────
   const handleFindMe = useCallback(() => {
     if (userLocation && mapRef.current) {
@@ -341,6 +411,7 @@ export default function MapClient({ userId }: { userId: string }) {
             <PopupCard
               rating={selectedRating}
               onViewDetails={() => router.push(`/v/${selectedRating.vendor.slug}`)}
+              onChangeTag={(tag) => handleChangeTag(selectedRating.vendor.id, tag)}
             />
           </Popup>
         )}

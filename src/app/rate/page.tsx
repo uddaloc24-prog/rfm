@@ -52,9 +52,10 @@ export default function RatePage() {
   const aboveStableRef = useRef(false);                          // true once we've LOST to the vendor above
   const belowStableRef = useRef(false);                          // true once we've BEATEN the vendor below
 
-  // Pre-load full vendor list once on mount — all filtering is client-side (instant).
+  // Pre-load top vendors on mount for instant suggestions.
+  // 30 is enough for the default picker — users can search for anything not in this list.
   useEffect(() => {
-    fetch('/api/vendors/trending?limit=500')
+    fetch('/api/vendors/trending?limit=30')
       .then((r) => r.json())
       .then((d) => setAllVendors(d.vendors ?? []))
       .catch(() => {})
@@ -161,12 +162,22 @@ export default function RatePage() {
     const loser_vendor_id  = selectedVendorWon ? candidate.vendor_id : selectedVendor.id;
 
     try {
-      await fetch('/api/ratings/compare', {
+      const res = await fetch('/api/ratings/compare', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ winner_vendor_id, loser_vendor_id }),
       });
-    } catch { /* non-fatal */ }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error ?? 'Comparison failed to save — please try again.');
+        setSubmitting(false);
+        return;
+      }
+    } catch {
+      setError('Network error — please check your connection and try again.');
+      setSubmitting(false);
+      return;
+    }
 
     const nextIndex = candidateIndex + 1;
     if (nextIndex < candidates.length) {
@@ -430,6 +441,12 @@ export default function RatePage() {
     return (
       <div className="min-h-dvh flex flex-col" style={{ background: '#FAFAF8' }}>
         <div className="h-10" />
+        {error && (
+          <div className="mx-5 mt-2 px-4 py-3 rounded-2xl font-body text-sm flex items-center justify-between gap-2" style={{ background: '#FEE2E2', color: '#B91C1C' }}>
+            <span>{error}</span>
+            <button onClick={() => setError(null)} className="shrink-0 font-bold text-base leading-none" style={{ color: '#B91C1C' }}>×</button>
+          </div>
+        )}
         <header className="flex items-center gap-4 px-5 py-4">
           <div className="flex-1">
             <h1 className="font-display font-bold text-xl leading-tight" style={{ color: '#1A1205' }}>

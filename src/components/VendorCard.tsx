@@ -4,10 +4,11 @@ import { Vendor, CATEGORY_EMOJI } from '@/lib/types';
 interface VendorCardProps {
   vendor: Vendor;
   rank: number;
+  userRank?: number;
   maxDailyCount?: number;
 }
 
-export default function VendorCard({ vendor, rank }: VendorCardProps) {
+export default function VendorCard({ vendor, rank, userRank }: VendorCardProps) {
   return (
     <Link href={`/v/${vendor.slug}`} className="block card-press">
       <div
@@ -44,8 +45,17 @@ export default function VendorCard({ vendor, rank }: VendorCardProps) {
           )}
         </div>
 
-        {/* Right side: score + category emoji */}
+        {/* Right side: personal rank (if rated) + community score + category emoji */}
         <div className="flex items-center gap-2 shrink-0">
+          {userRank !== undefined && (
+            <span
+              className="font-display font-bold text-xs px-2 py-0.5 rounded-full"
+              style={{ background: '#E8611A', color: '#FFFFFF' }}
+              title={`#${userRank} on your map`}
+            >
+              #{userRank}
+            </span>
+          )}
           {vendor.total_rating_count > 0 && (
             <span
               className="font-display font-bold text-sm px-2 py-0.5 rounded-full"

@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
+    console.error('[POST /api/ratings/compare]', e);
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }
