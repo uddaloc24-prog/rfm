@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import type { VendorPost } from '@/lib/social-types';
 
@@ -216,7 +216,7 @@ function InlineComments({ postId, currentUserId, onCountChange }: { postId: stri
   };
 
   // Load on mount
-  useState(() => { load(); });
+  useEffect(() => { load(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const submit = async () => {
     if (!body.trim()) return;
