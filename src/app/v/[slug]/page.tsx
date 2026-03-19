@@ -60,5 +60,25 @@ export default async function VendorPage({ params }: Props) {
   const { slug } = await params;
   const vendor = await getVendor(slug);
   if (!vendor) notFound();
-  return <VendorProfileClient vendor={vendor} />;
+
+  // Get current user + bookmark status (best-effort, non-blocking)
+  let currentUserId = '';
+  let isBookmarked = false;
+  try {
+    const { createClient, getUser } = await import('@/lib/supabase-server');
+    const user = await getUser();
+    if (user) {
+      currentUserId = user.id;
+      const supabase = await createClient();
+      const { data } = await supabase
+        .from('bookmarks')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('vendor_id', vendor.id)
+        .maybeSingle();
+      isBookmarked = !!data;
+    }
+  } catch { /* non-fatal */ }
+
+  return <VendorProfileClient vendor={vendor} currentUserId={currentUserId} isBookmarked={isBookmarked} />;
 }

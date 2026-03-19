@@ -1,8 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Vendor, CATEGORY_LABELS, CATEGORY_EMOJI } from '@/lib/types';
+import VendorPostCard from '@/components/social/VendorPostCard';
+import CreatePostModal from '@/components/social/CreatePostModal';
+import type { VendorPost } from '@/lib/social-types';
 
 interface Rater {
   id: string;
@@ -13,13 +17,23 @@ interface Rater {
 
 interface Props {
   vendor: Vendor;
+  currentUserId: string;
+  isBookmarked?: boolean;
 }
 
-export default function VendorProfileClient({ vendor }: Props) {
+export default function VendorProfileClient({ vendor, currentUserId, isBookmarked: initialBookmarked = false }: Props) {
   const router = useRouter();
   const [showRaters, setShowRaters] = useState(false);
   const [raters, setRaters] = useState<Rater[]>([]);
   const [loadingRaters, setLoadingRaters] = useState(false);
+  const [bookmarked, setBookmarked] = useState(initialBookmarked);
+  const [posts, setPosts] = useState<VendorPost[]>([]);
+  const [postsLoading, setPostsLoading] = useState(true);
+  const [postsOffset, setPostsOffset] = useState(0);
+  const [postsHasMore, setPostsHasMore] = useState(false);
+  const [showCreatePost, setShowCreatePost] = useState(false);
+  const [myPost, setMyPost] = useState<VendorPost | null>(null);
+  const [friendsRaters, setFriendsRaters] = useState<Rater[]>([]);
 
   const shareUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/v/${vendor.slug}`
@@ -29,20 +43,60 @@ export default function VendorProfileClient({ vendor }: Props) {
   );
   const whatsappUrl = `https://wa.me/?text=${shareMsg}`;
 
+  // Load posts
+  const loadPosts = useCallback(async (offset = 0) => {
+    setPostsLoading(true);
+    const res = await fetch(`/api/social/posts?vendor_id=${vendor.id}&offset=${offset}&limit=10`);
+    const data = await res.json();
+    const list: VendorPost[] = data.posts ?? [];
+    setPosts(prev => offset === 0 ? list : [...prev, ...list]);
+    setPostsOffset(offset + list.length);
+    setPostsHasMore(list.length === 10);
+    setPostsLoading(false);
+    // Find current user's post
+    const mine = list.find(p => p.user_id === currentUserId);
+    if (mine) setMyPost(mine);
+  }, [vendor.id, currentUserId]);
+
+  useEffect(() => { loadPosts(0); }, [loadPosts]);
+
+  // Load friends who rated this place
+  useEffect(() => {
+    fetch(`/api/vendors/${vendor.slug}/raters`).then(r => r.json()).then(d => {
+      setFriendsRaters((d.raters ?? []).slice(0, 8));
+    }).catch(() => {});
+  }, [vendor.slug]);
+
   const openRatersSheet = useCallback(async () => {
     setShowRaters(true);
-    if (raters.length > 0) return; // already loaded
+    if (raters.length > 0) return;
     setLoadingRaters(true);
     try {
       const res = await fetch(`/api/vendors/${vendor.slug}/raters`);
       const data = await res.json();
       setRaters(data.raters ?? []);
-    } catch {
-      // non-fatal
-    } finally {
-      setLoadingRaters(false);
-    }
+    } catch { /* non-fatal */ }
+    finally { setLoadingRaters(false); }
   }, [vendor.slug, raters.length]);
+
+  const toggleBookmark = async () => {
+    const next = !bookmarked;
+    setBookmarked(next);
+    if (next) {
+      await fetch('/api/social/bookmarks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendor_id: vendor.id }),
+      });
+    } else {
+      await fetch(`/api/social/bookmarks?vendor_id=${vendor.id}`, { method: 'DELETE' });
+    }
+  };
+
+  const handlePostCreated = (postId: string) => {
+    setShowCreatePost(false);
+    loadPosts(0);
+  };
 
   return (
     <div className="min-h-dvh" style={{ background: '#FAFAF8' }}>
@@ -53,17 +107,14 @@ export default function VendorProfileClient({ vendor }: Props) {
       >
         <div
           className="absolute inset-0"
-          style={{
-            backgroundImage:
-              'radial-gradient(circle at 20% 80%, rgba(0,0,0,0.25) 0%, transparent 50%)',
-          }}
+          style={{ backgroundImage: 'radial-gradient(circle at 20% 80%, rgba(0,0,0,0.25) 0%, transparent 50%)' }}
         />
         <div
           className="absolute inset-x-0 bottom-0 h-24"
           style={{ background: 'linear-gradient(to top, #FAFAF8, transparent)' }}
         />
 
-        {/* Back button — 44px touch target */}
+        {/* Back button */}
         <button
           onClick={() => router.back()}
           className="absolute top-12 left-5 w-11 h-11 rounded-full flex items-center justify-center active:opacity-70"
@@ -72,6 +123,16 @@ export default function VendorProfileClient({ vendor }: Props) {
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
             <path d="M19 12H5M5 12l7 7M5 12l7-7" stroke="#FFFFFF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
+        </button>
+
+        {/* Bookmark button */}
+        <button
+          onClick={toggleBookmark}
+          className="absolute top-12 right-5 w-11 h-11 rounded-full flex items-center justify-center active:opacity-70"
+          style={{ background: 'rgba(0,0,0,0.25)', backdropFilter: 'blur(8px)', border: 'none', cursor: 'pointer', fontSize: 20 }}
+          aria-label={bookmarked ? 'Remove bookmark' : 'Save place'}
+        >
+          {bookmarked ? '🔖' : '🏷️'}
         </button>
 
         {/* Hero content */}
@@ -96,16 +157,14 @@ export default function VendorProfileClient({ vendor }: Props) {
       {/* Content */}
       <div className="px-5 py-4 pb-32">
 
-        {/* Community score section */}
+        {/* Community score */}
         {vendor.total_rating_count > 0 && (
           <div
             className="rounded-2xl p-4 mb-4 flex items-center justify-between"
             style={{ background: '#FFFFFF', border: '1px solid #E8E2DC' }}
           >
             <div>
-              <p className="font-body text-sm font-semibold" style={{ color: '#1A1205' }}>
-                Community Score
-              </p>
+              <p className="font-body text-sm font-semibold" style={{ color: '#1A1205' }}>Community Score</p>
               <button
                 onClick={openRatersSheet}
                 className="font-body text-xs mt-0.5 active:opacity-70 text-left"
@@ -119,6 +178,26 @@ export default function VendorProfileClient({ vendor }: Props) {
                 {vendor.community_score.toFixed(1)}
               </span>
               <span className="font-body text-sm" style={{ color: '#9B8E84' }}>/10</span>
+            </div>
+          </div>
+        )}
+
+        {/* Friends who rated this (horizontal scroll) */}
+        {friendsRaters.length > 0 && (
+          <div className="mb-4">
+            <p className="font-body text-xs font-semibold mb-2" style={{ color: '#9B8E84', textTransform: 'uppercase', letterSpacing: '0.05em' }}>From your network</p>
+            <div style={{ display: 'flex', gap: 12, overflowX: 'auto', paddingBottom: 4 }}>
+              {friendsRaters.map(r => (
+                <Link key={r.id} href={`/profile/${r.username}`} style={{ textDecoration: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: '50%', background: 'rgba(232,97,26,0.12)', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    {r.avatar_url
+                      ? <img src={r.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      : <span style={{ color: '#E8611A', fontWeight: 700, fontSize: 16 }}>{(r.display_name || r.username)[0]?.toUpperCase()}</span>
+                    }
+                  </div>
+                  <span style={{ fontSize: 11, color: '#9B8E84', maxWidth: 52, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.display_name || r.username}</span>
+                </Link>
+              ))}
             </div>
           </div>
         )}
@@ -139,42 +218,73 @@ export default function VendorProfileClient({ vendor }: Props) {
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <span className="text-sm">{icon}</span>
-                  <span
-                    className="font-body text-[10px] font-semibold uppercase tracking-wider"
-                    style={{ color: '#9B8E84' }}
-                  >
-                    {label}
-                  </span>
+                  <span className="font-body text-[10px] font-semibold uppercase tracking-wider" style={{ color: '#9B8E84' }}>{label}</span>
                 </div>
-                <p className="font-body text-sm font-medium leading-snug" style={{ color: '#1A1205' }}>
-                  {value}
-                </p>
+                <p className="font-body text-sm font-medium leading-snug" style={{ color: '#1A1205' }}>{value}</p>
               </div>
             ) : null
           )}
         </div>
 
-        {/* Rate this place CTA */}
-        <div
-          className="rounded-2xl p-4 mb-6 flex items-center gap-3"
-          style={{ background: 'rgba(232,97,26,0.06)', border: '1.5px solid rgba(232,97,26,0.2)' }}
-        >
-          <span className="text-2xl">⭐</span>
-          <div className="flex-1">
-            <p className="font-body text-sm font-semibold" style={{ color: '#1A1205' }}>Have you been here?</p>
-            <p className="font-body text-xs" style={{ color: '#9B8E84' }}>Rate it to add to your personal food map</p>
+        {/* Posts section */}
+        <div className="mb-6">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <h2 className="font-display font-bold text-lg" style={{ color: '#13132A', margin: 0 }}>
+              What people say
+            </h2>
+            {!myPost && (
+              <button
+                onClick={() => setShowCreatePost(true)}
+                style={{ padding: '7px 14px', borderRadius: 99, border: 'none', background: '#E8611A', color: '#fff', fontWeight: 600, fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                + Write
+              </button>
+            )}
           </div>
-          <a
-            href="/rate"
-            className="font-body text-sm font-semibold px-3 py-1.5 rounded-xl active:opacity-70"
-            style={{ background: '#E8611A', color: '#FFFFFF' }}
-          >
-            Rate
-          </a>
+
+          {postsLoading && posts.length === 0 ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '32px 0' }}>
+              <div style={{ width: 28, height: 28, border: '3px solid #E8611A', borderTopColor: 'transparent', borderRadius: '50%' }} />
+            </div>
+          ) : posts.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px 16px', background: '#fff', borderRadius: 16, border: '1px solid #F0EBE5' }}>
+              <p style={{ fontSize: 32, margin: '0 0 8px' }}>🍽️</p>
+              <p style={{ fontSize: 14, fontWeight: 600, color: '#13132A', margin: '0 0 4px' }}>No posts yet</p>
+              <p style={{ fontSize: 13, color: '#8A7E74', margin: '0 0 14px' }}>Be the first to share your experience!</p>
+              <button
+                onClick={() => setShowCreatePost(true)}
+                style={{ padding: '10px 20px', borderRadius: 12, border: 'none', background: '#E8611A', color: '#fff', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
+              >
+                Write a post
+              </button>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {posts.map(p => (
+                <VendorPostCard
+                  key={p.id}
+                  post={p}
+                  currentUserId={currentUserId}
+                  onDeleted={id => {
+                    setPosts(prev => prev.filter(x => x.id !== id));
+                    if (myPost?.id === id) setMyPost(null);
+                  }}
+                />
+              ))}
+              {postsHasMore && (
+                <button
+                  onClick={() => loadPosts(postsOffset)}
+                  style={{ width: '100%', padding: 12, borderRadius: 12, border: '1px solid #E8E2DC', background: '#fff', fontSize: 13, color: '#8A7E74', cursor: 'pointer' }}
+                >
+                  Load more posts
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
-      {/* WhatsApp share — fixed bottom */}
+      {/* Fixed bottom bar: WhatsApp share */}
       <div
         className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-[430px] px-5 py-4"
         style={{
@@ -198,6 +308,16 @@ export default function VendorProfileClient({ vendor }: Props) {
         </a>
       </div>
 
+      {/* Create Post Modal */}
+      {showCreatePost && (
+        <CreatePostModal
+          vendorId={vendor.id}
+          vendorName={vendor.name}
+          onClose={() => setShowCreatePost(false)}
+          onCreated={handlePostCreated}
+        />
+      )}
+
       {/* Raters bottom sheet */}
       {showRaters && (
         <div
@@ -210,65 +330,47 @@ export default function VendorProfileClient({ vendor }: Props) {
             style={{ background: '#FAFAF8', maxHeight: '70vh' }}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Handle */}
             <div className="flex justify-center pt-3 pb-1">
               <div className="w-10 h-1 rounded-full" style={{ background: '#E0D9D3' }} />
             </div>
-
-            {/* Header */}
             <div className="px-5 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid #E8E2DC' }}>
-              <h2 className="font-display font-bold text-lg" style={{ color: '#1A1205' }}>
-                Who&apos;s tried this
-              </h2>
+              <h2 className="font-display font-bold text-lg" style={{ color: '#1A1205' }}>Who&apos;s tried this</h2>
               <button
                 onClick={() => setShowRaters(false)}
                 className="w-8 h-8 flex items-center justify-center rounded-full active:opacity-70"
-                style={{ background: '#F0EBE5' }}
+                style={{ background: '#F0EBE5', border: 'none', cursor: 'pointer' }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
                   <path d="M18 6L6 18M6 6l12 12" stroke="#6B5E55" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               </button>
             </div>
-
-            {/* List */}
             <div className="overflow-y-auto" style={{ maxHeight: 'calc(70vh - 100px)' }}>
               {loadingRaters ? (
                 <div className="flex justify-center py-12">
-                  <div
-                    className="w-6 h-6 rounded-full border-2 animate-spin"
-                    style={{ borderColor: '#E8611A', borderTopColor: 'transparent' }}
-                  />
+                  <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: '#E8611A', borderTopColor: 'transparent' }} />
                 </div>
               ) : raters.length === 0 ? (
                 <div className="flex flex-col items-center py-12 px-5">
                   <span className="text-3xl mb-3">🍽️</span>
-                  <p className="font-body text-sm text-center" style={{ color: '#9B8E84' }}>
-                    No one has rated this place yet. Be the first!
-                  </p>
+                  <p className="font-body text-sm text-center" style={{ color: '#9B8E84' }}>No one has rated this place yet.</p>
                 </div>
               ) : (
                 <ul className="px-5 py-3 flex flex-col gap-1">
                   {raters.map((rater) => (
-                    <li
-                      key={rater.id}
-                      className="flex items-center gap-3 py-2.5"
-                      style={{ borderBottom: '1px solid #F0EBE5' }}
-                    >
-                      <div
-                        className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 font-display font-bold text-sm"
-                        style={{ background: 'rgba(232,97,26,0.12)', color: '#E8611A' }}
-                      >
-                        {(rater.display_name || rater.username).charAt(0).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <p className="font-body text-sm font-semibold truncate" style={{ color: '#1A1205' }}>
-                          {rater.display_name || rater.username}
-                        </p>
-                        <p className="font-body text-xs truncate" style={{ color: '#9B8E84' }}>
-                          @{rater.username}
-                        </p>
-                      </div>
+                    <li key={rater.id} className="flex items-center gap-3 py-2.5" style={{ borderBottom: '1px solid #F0EBE5' }}>
+                      <Link href={`/profile/${rater.username}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0 font-display font-bold text-sm" style={{ background: 'rgba(232,97,26,0.12)', color: '#E8611A', overflow: 'hidden' }}>
+                          {rater.avatar_url
+                            ? <img src={rater.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : (rater.display_name || rater.username).charAt(0).toUpperCase()
+                          }
+                        </div>
+                        <div className="min-w-0">
+                          <p className="font-body text-sm font-semibold truncate" style={{ color: '#1A1205' }}>{rater.display_name || rater.username}</p>
+                          <p className="font-body text-xs truncate" style={{ color: '#9B8E84' }}>@{rater.username}</p>
+                        </div>
+                      </Link>
                     </li>
                   ))}
                 </ul>
