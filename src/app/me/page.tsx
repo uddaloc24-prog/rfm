@@ -54,10 +54,15 @@ function MeContent() {
   const [togglingPrivacy, setTogglingPrivacy] = useState(false);
   const [allRatings, setAllRatings] = useState<RatedPlace[]>([]);
   const [ratingsLoading, setRatingsLoading] = useState(false);
-  const [editingUsername, setEditingUsername] = useState(false);
-  const [usernameInput, setUsernameInput] = useState('');
-  const [usernameError, setUsernameError] = useState('');
-  const [savingUsername, setSavingUsername] = useState(false);
+  const [showEditProfile, setShowEditProfile] = useState(false);
+  const [editDisplayName, setEditDisplayName] = useState('');
+  const [editUsername, setEditUsername] = useState('');
+  const [editBio, setEditBio] = useState('');
+  const [editCity, setEditCity] = useState('');
+  const [editAvatarPreview, setEditAvatarPreview] = useState<string | null>(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileSaveError, setProfileSaveError] = useState('');
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   // New state
   const [profileTab, setProfileTab] = useState<ProfileTab>('activity');
@@ -90,29 +95,50 @@ function MeContent() {
     }
   }, [scrollToList, ratingsLoading]);
 
-  async function saveUsername() {
-    if (!usernameInput.trim() || savingUsername) return;
-    setSavingUsername(true);
-    setUsernameError('');
+  async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingAvatar(true);
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await fetch('/api/social/upload-avatar', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.url) setEditAvatarPreview(data.url);
+    setUploadingAvatar(false);
+  }
+
+  async function saveProfile() {
+    if (savingProfile) return;
+    setSavingProfile(true);
+    setProfileSaveError('');
     try {
+      const updates: Record<string, string> = {
+        display_name: editDisplayName.trim() || (profile?.display_name ?? ''),
+        username: editUsername.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') || (profile?.username ?? ''),
+        bio: editBio.trim(),
+        city: editCity.trim(),
+      };
+      if (editAvatarPreview && editAvatarPreview !== (profile?.avatar_url ?? null)) {
+        updates.avatar_url = editAvatarPreview;
+      }
       const res = await fetch('/api/users/me', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: usernameInput.trim().toLowerCase().replace(/[^a-z0-9_]/g, '') }),
+        body: JSON.stringify(updates),
       });
       const data = await res.json();
       if (res.status === 409) {
-        setUsernameError('Username already taken');
+        setProfileSaveError('Username already taken');
       } else if (res.ok) {
         await refreshProfile();
-        setEditingUsername(false);
+        setShowEditProfile(false);
       } else {
-        setUsernameError(data.error ?? 'Failed to save');
+        setProfileSaveError(data.error ?? 'Failed to save');
       }
     } catch {
-      setUsernameError('Network error');
+      setProfileSaveError('Network error');
     }
-    setSavingUsername(false);
+    setSavingProfile(false);
   }
 
   async function togglePrivacy() {
@@ -218,38 +244,23 @@ function MeContent() {
               {/* Avatar + name */}
               <div className="text-center mb-4">
                 <div
-                  className="w-16 h-16 rounded-2xl flex items-center justify-center font-display font-bold text-xl text-white mx-auto mb-3"
-                  style={{ background: avatarColor(profile.username) }}
+                  className="w-16 h-16 rounded-2xl mx-auto mb-3 overflow-hidden flex items-center justify-center font-display font-bold text-xl text-white"
+                  style={{ background: profile.avatar_url ? '#F0EBE5' : avatarColor(profile.username) }}
                 >
-                  {getInitials(profile.display_name)}
+                  {profile.avatar_url
+                    ? <img src={profile.avatar_url} alt={profile.display_name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : getInitials(profile.display_name)
+                  }
                 </div>
                 <h2 className="font-display font-bold text-lg" style={{ color: '#1A1205' }}>
                   {profile.display_name}
                 </h2>
 
-                {editingUsername ? (
-                  <div className="mt-1 flex flex-col items-center gap-1">
-                    <input
-                      autoFocus
-                      value={usernameInput}
-                      onChange={(e) => setUsernameInput(e.target.value)}
-                      onBlur={() => { /* save only on Enter — blur can fire from unrelated clicks */ }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') { e.preventDefault(); saveUsername(); }
-                        if (e.key === 'Escape') { e.preventDefault(); setEditingUsername(false); }
-                      }}
-                      className="px-3 py-1.5 rounded-xl font-body text-sm text-center outline-none"
-                      style={{ background: '#F5F0EB', border: '1.5px solid #E8611A', color: '#1A1205', width: '160px' }}
-                      placeholder="new_username"
-                    />
-                    {usernameError && (
-                      <p className="font-body text-xs" style={{ color: '#E8611A' }}>{usernameError}</p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="font-body text-sm mt-0.5" style={{ color: '#9B8E84' }}>
-                    @{profile.username}
-                  </p>
+                <p className="font-body text-sm mt-0.5" style={{ color: '#9B8E84' }}>
+                  @{profile.username}
+                </p>
+                {profile.bio && (
+                  <p className="font-body text-xs mt-1 px-4 text-center" style={{ color: '#9B8E84' }}>{profile.bio}</p>
                 )}
 
                 {profile.city && (
@@ -266,7 +277,7 @@ function MeContent() {
               {/* Edit + Share buttons */}
               <div className="flex gap-2 mb-4">
                 <button
-                  onClick={() => { setUsernameInput(profile.username); setUsernameError(''); setEditingUsername(true); }}
+                  onClick={() => { setEditDisplayName(profile.display_name); setEditUsername(profile.username); setEditBio(profile.bio ?? ''); setEditCity(profile.city ?? ''); setEditAvatarPreview(profile.avatar_url ?? null); setProfileSaveError(''); setShowEditProfile(true); }}
                   className="flex-1 py-2.5 rounded-xl font-body text-sm font-semibold active:opacity-70"
                   style={{ background: '#F5F0EB', color: '#1A1205' }}
                 >
@@ -574,6 +585,110 @@ function MeContent() {
       )}
 
       <BottomNav />
+
+      {/* Edit Profile sheet */}
+      {showEditProfile && profile && (
+        <div
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 50, display: 'flex', alignItems: 'flex-end' }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowEditProfile(false); }}
+        >
+          <div style={{ background: '#FAFAF8', borderRadius: '20px 20px 0 0', padding: '20px 20px 44px', width: '100%', maxWidth: 430, margin: '0 auto', maxHeight: '92vh', overflowY: 'auto' }}>
+            <div style={{ width: 36, height: 4, borderRadius: 2, background: '#D0C9C2', margin: '0 auto 18px' }} />
+            <h2 className="font-display font-bold text-xl mb-5" style={{ color: '#13132A' }}>Edit Profile</h2>
+
+            {/* Avatar */}
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 22 }}>
+              <label style={{ position: 'relative', cursor: 'pointer' }}>
+                <div style={{ width: 76, height: 76, borderRadius: '50%', overflow: 'hidden', background: editAvatarPreview ? '#F0EBE5' : avatarColor(profile.username), display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26, fontWeight: 700, color: '#fff' }}>
+                  {editAvatarPreview
+                    ? <img src={editAvatarPreview} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : getInitials(profile.display_name)
+                  }
+                </div>
+                <div style={{ position: 'absolute', bottom: 0, right: 0, width: 26, height: 26, borderRadius: '50%', background: '#E8611A', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid #FAFAF8' }}>
+                  {uploadingAvatar
+                    ? <div style={{ width: 11, height: 11, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                    : <span style={{ fontSize: 13 }}>📷</span>
+                  }
+                </div>
+                <input type="file" accept="image/jpeg,image/png,image/webp" onChange={handleAvatarUpload} style={{ display: 'none' }} disabled={uploadingAvatar} />
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div>
+                <label className="font-body" style={{ fontSize: 11, fontWeight: 600, color: '#9B8E84', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Display Name</label>
+                <input
+                  value={editDisplayName}
+                  onChange={(e) => setEditDisplayName(e.target.value)}
+                  placeholder="Your name"
+                  maxLength={50}
+                  className="font-body"
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1.5px solid #E8E2DC', background: '#FFFFFF', fontSize: 15, color: '#13132A', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label className="font-body" style={{ fontSize: 11, fontWeight: 600, color: '#9B8E84', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>Username</label>
+                <input
+                  value={editUsername}
+                  onChange={(e) => setEditUsername(e.target.value)}
+                  placeholder="username"
+                  maxLength={30}
+                  className="font-body"
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1.5px solid #E8E2DC', background: '#FFFFFF', fontSize: 15, color: '#13132A', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label className="font-body" style={{ fontSize: 11, fontWeight: 600, color: '#9B8E84', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+                  Bio <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0 }}>({editBio.length}/160)</span>
+                </label>
+                <textarea
+                  value={editBio}
+                  onChange={(e) => setEditBio(e.target.value)}
+                  placeholder="Tell people a bit about you…"
+                  maxLength={160}
+                  rows={3}
+                  className="font-body"
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1.5px solid #E8E2DC', background: '#FFFFFF', fontSize: 15, color: '#13132A', outline: 'none', resize: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+              <div>
+                <label className="font-body" style={{ fontSize: 11, fontWeight: 600, color: '#9B8E84', letterSpacing: '0.05em', textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>City</label>
+                <input
+                  value={editCity}
+                  onChange={(e) => setEditCity(e.target.value)}
+                  placeholder="e.g. Bangalore"
+                  maxLength={50}
+                  className="font-body"
+                  style={{ width: '100%', padding: '12px 14px', borderRadius: 12, border: '1.5px solid #E8E2DC', background: '#FFFFFF', fontSize: 15, color: '#13132A', outline: 'none', boxSizing: 'border-box' }}
+                />
+              </div>
+            </div>
+
+            {profileSaveError && (
+              <p className="font-body text-sm mt-3" style={{ color: '#E8611A' }}>{profileSaveError}</p>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 22 }}>
+              <button
+                onClick={() => setShowEditProfile(false)}
+                className="font-body"
+                style={{ flex: 1, padding: '14px', borderRadius: 14, border: '1.5px solid #E8E2DC', background: '#FFFFFF', fontSize: 15, fontWeight: 600, color: '#8A7E74', cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={saveProfile}
+                disabled={savingProfile || uploadingAvatar}
+                className="font-body"
+                style={{ flex: 2, padding: '14px', borderRadius: 14, border: 'none', background: savingProfile || uploadingAvatar ? '#D0C9C2' : '#E8611A', fontSize: 15, fontWeight: 700, color: '#FFFFFF', cursor: savingProfile || uploadingAvatar ? 'default' : 'pointer' }}
+              >
+                {savingProfile ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
