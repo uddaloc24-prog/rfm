@@ -29,6 +29,8 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS neighborhood text;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_list_private boolean DEFAULT false;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS last_username_change_at timestamptz;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at timestamptz DEFAULT now();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned boolean DEFAULT false;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_private boolean DEFAULT false;
 
 
 -- =============================================================================
